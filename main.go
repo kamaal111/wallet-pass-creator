@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"io/ioutil"
 	"log"
 	"os"
@@ -24,97 +23,130 @@ func main() {
 	passName := "Generic"
 	assetsPath := fmt.Sprintf("%s.pass/", passName)
 
-	hashedManifest, err := hasher.HashFiles(assetsPath, true)
+	err := createManifestJSON(assetsPath)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatalln(err)
 	}
-	manifest, err := json.MarshalIndent(hashedManifest, "", " ")
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-	_ = ioutil.WriteFile("manifest.json", manifest, 0644)
 	log.Println("done creating manifest.json")
 
 	// TODO: Get from env
 	certificatePassword := fmt.Sprintf("pass:%s", "yes")
-	// TODO: Get from env and if empty throw error
-	keyPassword := fmt.Sprintf("pass:%s", "y")
 
-	createPasscertificate := exec.Command(OPENSSL_APP, "pkcs12", "-in", "Certificates.p12", "-clcerts", "-nokeys",
-		"-out", "passcertificate.pem", "-passin", certificatePassword)
-	_, err = createPasscertificate.Output()
+	err = createPasscertificate(certificatePassword)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	log.Println("done creating passcertificate.pem")
 
-	createPasskey := exec.Command(OPENSSL_APP, "pkcs12", "-in", "Certificates.p12", "-nocerts", "-out", "passkey.pem",
-		"-passin", certificatePassword, "-passout", keyPassword)
-	_, err = createPasskey.Output()
+	// TODO: Get from env and if empty throw error
+	keyPassword := fmt.Sprintf("pass:%s", "y")
+
+	err = createPasskey(certificatePassword, keyPassword)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	log.Println("done creating passkey.pem")
 
-	createSignature := exec.Command(OPENSSL_APP, "smime", "-binary", "-sign", "-certfile", "Apple Worldwide Developer Relations Certification Authority.pem",
-		"-signer", "passcertificate.pem", "-inkey", "passkey.pem", "-in", "manifest.json", "-out", "signature", "-outform",
-		"DER", "-passin", keyPassword)
-	_, err = createSignature.Output()
+	err = createSignature(keyPassword)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	log.Println("done creating signature")
 
-	dirFiles, err := ioutil.ReadDir(assetsPath)
+	assetDirFiles, err := ioutil.ReadDir(assetsPath)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	for _, file := range dirFiles {
-		fileName := file.Name()
-		copy(files.AppendFileToPath(assetsPath, fileName), fileName)
+	assetFiles := []string{}
+
+	for _, file := range assetDirFiles {
+		assetFiles = append(assetFiles, file.Name())
 	}
 
-	// TODO: Get file names of assets from manifest.json
-	filesToZip := []string{
+	moveFilesToRoot(assetFiles, assetsPath)
+
+	generatedFilesToZip := []string{
 		"manifest.json",
-		"pass.json",
 		"signature",
-		"logo.png",
-		"logo@2x.png",
-		"icon.png",
-		"icon@2x.png",
-		"thumbnail.png",
-		"thumbnail@2x.png",
 	}
+	filesToZip := append(assetFiles, generatedFilesToZip...)
 	pkPassOutput := fmt.Sprintf("%s.pkpass", passName)
 	err = zipFiles(pkPassOutput, filesToZip)
+	filesToCleanUp := append(generatedFilesToZip, []string{
+		"passcertificate.pem",
+		"passkey.pem",
+	}...)
 	if err != nil {
-		cleanUp(dirFiles, assetsPath)
+		cleanUp(assetFiles, assetsPath, filesToCleanUp)
 		log.Fatalln(err)
 	}
-	cleanUp(dirFiles, assetsPath)
-
-	openCommand := exec.Command("open", pkPassOutput)
-	_, err = openCommand.Output()
-	if err != nil {
-		log.Fatalln(err)
-	}
+	cleanUp(assetFiles, assetsPath, filesToCleanUp)
 
 	timeElapsed := time.Since(startTimer)
 	log.Printf("all done creating %s in %s\n", pkPassOutput, timeElapsed)
 
 }
 
-func cleanUp(dirFiles []fs.FileInfo, assetsPath string) {
-	for _, file := range dirFiles {
-		fileName := file.Name()
-		copy(fileName, files.AppendFileToPath(assetsPath, fileName))
+func createManifestJSON(assetsPath string) error {
+	hashedManifest, err := hasher.HashFiles(assetsPath, true)
+	if err != nil {
+		return err
 	}
+
+	manifest, err := json.MarshalIndent(hashedManifest, "", " ")
+	if err != nil {
+		return err
+	}
+
+	_ = ioutil.WriteFile("manifest.json", manifest, 0644)
+	return nil
+}
+
+func createPasscertificate(certificatePassword string) error {
+	command := exec.Command(OPENSSL_APP, "pkcs12", "-in", "Certificates.p12", "-clcerts", "-nokeys",
+		"-out", "passcertificate.pem", "-passin", certificatePassword)
+	_, err := command.Output()
+	return err
+}
+
+func createPasskey(certificatePassword string, keyPassword string) error {
+	createPasskey := exec.Command(OPENSSL_APP, "pkcs12", "-in", "Certificates.p12", "-nocerts", "-out", "passkey.pem",
+		"-passin", certificatePassword, "-passout", keyPassword)
+	_, err := createPasskey.Output()
+	return err
+}
+
+func createSignature(keyPassword string) error {
+	createSignature := exec.Command(OPENSSL_APP, "smime", "-binary", "-sign", "-certfile", "Apple Worldwide Developer Relations Certification Authority.pem",
+		"-signer", "passcertificate.pem", "-inkey", "passkey.pem", "-in", "manifest.json", "-out", "signature", "-outform",
+		"DER", "-passin", keyPassword)
+	_, err := createSignature.Output()
+	return err
+}
+
+func moveFilesToRoot(assetFiles []string, assetsPath string) {
+	for _, file := range assetFiles {
+		move(files.AppendFileToPath(assetsPath, file), file)
+	}
+}
+
+func cleanUp(assetFiles []string, assetsPath string, filesToRemove []string) {
+	for _, file := range assetFiles {
+		move(file, files.AppendFileToPath(assetsPath, file))
+	}
+
+	for _, file := range filesToRemove {
+		err := os.Remove(file)
+		if err != nil {
+			log.Println(err)
+		}
+	}
+
 	log.Println("cleaning up the mess I made")
 }
 
-func copy(fromPath string, destination string) error {
+func move(fromPath string, destination string) error {
 	return os.Rename(fromPath, destination)
 }
 
