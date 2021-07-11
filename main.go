@@ -20,35 +20,61 @@ const OPENSSL_APP = "openssl"
 func main() {
 	startTimer := time.Now()
 
-	passName := "Generic"
-	assetsPath := fmt.Sprintf("%s.pass/", passName)
+	CERTIFICATE_PASSWORD := os.Getenv("CERTIFICATE_PASSWORD")
+	KEY_PASSWORD := os.Getenv("KEY_PASSWORD")
+	WWDR_PATH := os.Getenv("WWDR_PATH")
+	CERTIFICATE_PATH := os.Getenv("CERTIFICATE_PATH")
+	PK_PASS_NAME := os.Getenv("PK_PASS_NAME")
 
-	err := createManifestJSON(assetsPath)
+	if KEY_PASSWORD == "" {
+		log.Fatalln("KEY_PASSWORD is required to use this script")
+	}
+	if WWDR_PATH == "" {
+		defaultWWDRPath := "Apple Worldwide Developer Relations Certification Authority.pem"
+		log.Printf("no WWDR_PATH has been provided, will use default of %s\n", defaultWWDRPath)
+		WWDR_PATH = defaultWWDRPath
+	}
+	if CERTIFICATE_PATH == "" {
+		defaultCertificatePath := "Certificates.p12"
+		log.Printf("no CERTIFICATE_PATH has been provided, will use default of %s\n", defaultCertificatePath)
+		CERTIFICATE_PATH = defaultCertificatePath
+	}
+	if PK_PASS_NAME == "" {
+		log.Fatalln("PK_PASS_NAME is required to use this script")
+	}
+
+	assetsPath := fmt.Sprintf("%s.pass/", PK_PASS_NAME)
+	_, err := os.Stat(assetsPath)
+	if os.IsNotExist(err) {
+		log.Fatalf("make sure to set all your assets in %s\n", assetsPath)
+	}
+
+	err = createManifestJSON(assetsPath)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	log.Println("done creating manifest.json")
 
-	// TODO: Get from env
-	certificatePassword := fmt.Sprintf("pass:%s", "yes")
-
-	err = createPasscertificate(certificatePassword)
+	certificatePassword := fmt.Sprintf("pass:%s", CERTIFICATE_PASSWORD)
+	err = createPasscertificate(certificatePassword, CERTIFICATE_PATH)
 	if err != nil {
+		log.Println("something went wrong while creating passcertificate.pem, probably an wrong CERTIFICATE_PATH or CERTIFICATE_PASSWORD")
 		log.Fatalln(err)
 	}
 	log.Println("done creating passcertificate.pem")
 
-	// TODO: Get from env and if empty throw error
-	keyPassword := fmt.Sprintf("pass:%s", "y")
+	keyPassword := fmt.Sprintf("pass:%s", KEY_PASSWORD)
 
-	err = createPasskey(certificatePassword, keyPassword)
+	err = createPasskey(certificatePassword, keyPassword, CERTIFICATE_PATH)
 	if err != nil {
+		log.Println("something went wrong while creating passkey.pem, probably an wrong KEY_PASSWORD")
 		log.Fatalln(err)
 	}
 	log.Println("done creating passkey.pem")
 
-	err = createSignature(keyPassword)
+	err = createSignature(keyPassword, WWDR_PATH)
 	if err != nil {
+		log.Println("something went wrong while creating signature, probably an wrong WWDR_PATH")
 		log.Fatalln(err)
 	}
 	log.Println("done creating signature")
@@ -71,7 +97,7 @@ func main() {
 		"signature",
 	}
 	filesToZip := append(assetFiles, generatedFilesToZip...)
-	pkPassOutput := fmt.Sprintf("%s.pkpass", passName)
+	pkPassOutput := fmt.Sprintf("%s.pkpass", PK_PASS_NAME)
 	err = zipFiles(pkPassOutput, filesToZip)
 	filesToCleanUp := append(generatedFilesToZip, []string{
 		"passcertificate.pem",
@@ -103,22 +129,22 @@ func createManifestJSON(assetsPath string) error {
 	return nil
 }
 
-func createPasscertificate(certificatePassword string) error {
-	command := exec.Command(OPENSSL_APP, "pkcs12", "-in", "Certificates.p12", "-clcerts", "-nokeys",
+func createPasscertificate(certificatePassword string, certificatePath string) error {
+	command := exec.Command(OPENSSL_APP, "pkcs12", "-in", certificatePath, "-clcerts", "-nokeys",
 		"-out", "passcertificate.pem", "-passin", certificatePassword)
 	_, err := command.Output()
 	return err
 }
 
-func createPasskey(certificatePassword string, keyPassword string) error {
-	createPasskey := exec.Command(OPENSSL_APP, "pkcs12", "-in", "Certificates.p12", "-nocerts", "-out", "passkey.pem",
+func createPasskey(certificatePassword string, keyPassword string, certificatePath string) error {
+	createPasskey := exec.Command(OPENSSL_APP, "pkcs12", "-in", certificatePath, "-nocerts", "-out", "passkey.pem",
 		"-passin", certificatePassword, "-passout", keyPassword)
 	_, err := createPasskey.Output()
 	return err
 }
 
-func createSignature(keyPassword string) error {
-	createSignature := exec.Command(OPENSSL_APP, "smime", "-binary", "-sign", "-certfile", "Apple Worldwide Developer Relations Certification Authority.pem",
+func createSignature(keyPassword string, wwdrPath string) error {
+	createSignature := exec.Command(OPENSSL_APP, "smime", "-binary", "-sign", "-certfile", wwdrPath,
 		"-signer", "passcertificate.pem", "-inkey", "passkey.pem", "-in", "manifest.json", "-out", "signature", "-outform",
 		"DER", "-passin", keyPassword)
 	_, err := createSignature.Output()
