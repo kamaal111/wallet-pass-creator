@@ -1,10 +1,8 @@
 package main
 
 import (
-	"archive/zip"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -106,7 +104,7 @@ func main() {
 	}
 	filesToZip := append(assetFiles, generatedFilesToZip...)
 	pkPassOutput := fmt.Sprintf("%s.pkpass", PK_PASS_NAME)
-	err = zipFiles(pkPassOutput, filesToZip)
+	err = files.ZipFiles(pkPassOutput, filesToZip)
 
 	var filesToCleanUp []string
 	if cleanUpBool {
@@ -167,15 +165,24 @@ func createSignature(keyPassword string, wwdrPath string) error {
 	return err
 }
 
+func contains(s []string, e string) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
 func moveFilesToRoot(assetFiles []string, assetsPath string) {
 	for _, file := range assetFiles {
-		move(files.AppendFileToPath(assetsPath, file), file)
+		files.Move(files.AppendFileToPath(assetsPath, file), file)
 	}
 }
 
 func cleanUp(assetFiles []string, assetsPath string, filesToRemove []string) {
 	for _, file := range assetFiles {
-		move(file, files.AppendFileToPath(assetsPath, file))
+		files.Move(file, files.AppendFileToPath(assetsPath, file))
 	}
 
 	for _, file := range filesToRemove {
@@ -186,62 +193,4 @@ func cleanUp(assetFiles []string, assetsPath string, filesToRemove []string) {
 	}
 
 	log.Println("cleaning up the mess I made")
-}
-
-func contains(s []string, e string) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
-}
-
-func move(fromPath string, destination string) error {
-	return os.Rename(fromPath, destination)
-}
-
-func zipFiles(filename string, files []string) error {
-	newZipFile, err := os.Create(filename)
-	if err != nil {
-		return err
-	}
-	defer newZipFile.Close()
-
-	zipWriter := zip.NewWriter(newZipFile)
-	defer zipWriter.Close()
-
-	for _, file := range files {
-		if err = addFileToZip(zipWriter, file); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func addFileToZip(zipWriter *zip.Writer, filename string) error {
-	fileToZip, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer fileToZip.Close()
-
-	info, err := fileToZip.Stat()
-	if err != nil {
-		return err
-	}
-
-	header, err := zip.FileInfoHeader(info)
-	if err != nil {
-		return err
-	}
-	header.Name = filename
-	header.Method = zip.Deflate
-
-	writer, err := zipWriter.CreateHeader(header)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(writer, fileToZip)
-	return err
 }
