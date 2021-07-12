@@ -25,6 +25,7 @@ func main() {
 	WWDR_PATH := os.Getenv("WWDR_PATH")
 	CERTIFICATE_PATH := os.Getenv("CERTIFICATE_PATH")
 	PK_PASS_NAME := os.Getenv("PK_PASS_NAME")
+	CLEAN_UP := os.Getenv("CLEAN_UP")
 
 	if KEY_PASSWORD == "" {
 		log.Fatalln("KEY_PASSWORD is required to use this script")
@@ -42,6 +43,13 @@ func main() {
 	if PK_PASS_NAME == "" {
 		log.Fatalln("PK_PASS_NAME is required to use this script")
 	}
+	if CLEAN_UP == "" {
+		defaultCleanUp := "Yes"
+		log.Printf("no CLEAN_UP has been provided, will use default of %s\n", defaultCleanUp)
+		CLEAN_UP = defaultCleanUp
+	}
+
+	cleanUpBool := contains([]string{"yes", "Yes", "y", "Y"}, CLEAN_UP)
 
 	assetsPath := fmt.Sprintf("%s.pass/", PK_PASS_NAME)
 	_, err := os.Stat(assetsPath)
@@ -99,10 +107,18 @@ func main() {
 	filesToZip := append(assetFiles, generatedFilesToZip...)
 	pkPassOutput := fmt.Sprintf("%s.pkpass", PK_PASS_NAME)
 	err = zipFiles(pkPassOutput, filesToZip)
-	filesToCleanUp := append(generatedFilesToZip, []string{
-		"passcertificate.pem",
-		"passkey.pem",
-	}...)
+
+	var filesToCleanUp []string
+	if cleanUpBool {
+		filesToCleanUp = append(generatedFilesToZip, []string{
+			"passcertificate.pem",
+			"passkey.pem",
+		}...)
+		log.Println("cleaning up passcertificate.pem and passkey.pem")
+	} else {
+		filesToCleanUp = generatedFilesToZip
+	}
+
 	if err != nil {
 		cleanUp(assetFiles, assetsPath, filesToCleanUp)
 		log.Fatalln(err)
@@ -170,6 +186,15 @@ func cleanUp(assetFiles []string, assetsPath string, filesToRemove []string) {
 	}
 
 	log.Println("cleaning up the mess I made")
+}
+
+func contains(s []string, e string) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
 }
 
 func move(fromPath string, destination string) error {
